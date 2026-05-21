@@ -406,7 +406,16 @@ await micropip.install('./pyodide/pydicom-2.4.4-py3-none-any.whl')
   setStep(88, 'Loading viewer…')
 
   // Load only the viewer/loader Python code (not the analysis functions yet)
-  await pyodide.runPythonAsync(PYODIDE_CORE_CODE)
+  try {
+    await pyodide.runPythonAsync(PYODIDE_CORE_CODE)
+  } catch(e) {
+    setStep(100, 'Error in core code — check console')
+    console.error('PYODIDE_CORE_CODE failed:', e)
+    document.getElementById('boot-status').style.color = '#e05555'
+    document.getElementById('boot-screen').classList.add('hidden')
+    alert('Python core failed to load:\n\n' + e.message + '\n\nCheck browser console (F12) for details.')
+    return
+  }
   setStep(100, 'Ready')
 
   // ── App is usable — hide boot screen immediately ───────────────────────────
@@ -424,9 +433,16 @@ async function loadAnalysisPackagesBackground() {
   badgeMsg.textContent = 'Loading analysis modules (local)…'
 
   try {
-    await pyodide.loadPackage(['scipy', 'scikit-image', 'pandas'])  // from ./pyodide/
+    // All wheels resolve from local pyodide-lock.json
+    await pyodide.loadPackage(['scipy', 'scikit-image', 'pandas'])
     badgeMsg.textContent = 'Finalising…'
-    await pyodide.runPythonAsync(PYODIDE_ANALYSIS_CODE)
+    try {
+      await pyodide.runPythonAsync(PYODIDE_ANALYSIS_CODE)
+    } catch(e) {
+      console.error('PYODIDE_ANALYSIS_CODE failed:', e)
+      badgeMsg.textContent = '⚠ Analysis code error — see console (F12)'
+      return
+    }
     analysisPackagesReady = true
     badge.classList.remove('show')
     // Unlock all Run buttons
@@ -447,17 +463,10 @@ async function loadAnalysisPackagesBackground() {
 const PYODIDE_CORE_CODE = `
 import io, base64, json, traceback
 import numpy as np
-import pandas as pd
-from scipy import ndimage as ndi
-from scipy.signal import find_peaks, peak_widths
-from scipy.optimize import curve_fit
-from skimage.measure import label, regionprops
-from skimage.segmentation import clear_border
-from skimage.ndimage import binary_fill_holes as skfill
 import pydicom
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+
+# Heavy packages loaded in Phase 2. Matplotlib also deferred.
+# Functions that need them import lazily inside their own body.
 
 # ── cv2 shim (circle drawing via numpy) ─────────────────────────────
 class _CV2Shim:
@@ -634,11 +643,18 @@ print('CAMP.png core loaded')
 
 // Analysis code loaded after background packages finish
 const PYODIDE_ANALYSIS_CODE = `
+import io, base64, traceback
+import numpy as np
 import pandas as pd
+from scipy import ndimage as ndi
 from scipy.signal import find_peaks, peak_widths
 from scipy.optimize import curve_fit
 from skimage.measure import label, regionprops
 from skimage.segmentation import clear_border
+from skimage.ndimage import binary_fill_holes as skfill
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 
 
